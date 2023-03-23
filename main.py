@@ -20,7 +20,7 @@ class Downloader:
             self.chunk_range = chunk_range  # chunk range to download from server
             self.was_interrupted = was_interrupted  # flag to denote if the job was interrupted due to some error
 
-    def __init__(self, url=None, number_of_threads=1):
+    def __init__(self, url=None, number_of_threads=1, name=""):
         """Constructor of Downloader class
         :param url: URL of file to be downloaded (optional)
         :param number_of_threads: Maximum number of threads (optional)
@@ -35,7 +35,7 @@ class Downloader:
         self.range_list = list()  # byte range for each download thread
         self.start_time = None  # start time to calculate overall download time
         self.end_time = None  # end time to calculate overall download time
-        self.target_filename = os.path.basename(self.url)  # name of a file to be downloaded
+        self.target_filename = os.path.basename(self.url) if name == "" else name # name of a file to be downloaded
         self.status_refresh_rate = 2  # status will be refreshed after certain time (in seconds)
         self.download_durations = [None] * self.number_of_threads  # total download time for each thread (for benchmarking)
         self.q = queue.Queue(maxsize=0)  # worker threads will pick download job from the queue
@@ -321,16 +321,19 @@ if __name__ == '__main__':
 
     url = ""
     threads = ""
+    name = ""
     arguments_list = getopts(sys.argv)
     if '-url' in arguments_list:
         url = arguments_list['-url']
     if '-threads' in arguments_list:
         threads = int(arguments_list['-threads'])
+    if '-name' in arguments_list:
+        name = arguments_list['-name']
 
     if not url or not threads:
         raise ValueError("Please provide required arguments.")
 
-    obj = Downloader(url, threads)
+    obj = Downloader(url, threads, name)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
 
