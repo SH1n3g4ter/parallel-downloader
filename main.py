@@ -326,6 +326,7 @@ if __name__ == '__main__':
     url = ""
     threads = ""
     name = ""
+    verify_cert = True
     arguments_list = getopts(sys.argv)
     if '-url' in arguments_list:
         url = arguments_list['-url']
@@ -333,12 +334,13 @@ if __name__ == '__main__':
         threads = int(arguments_list['-threads'])
     if '-name' in arguments_list:
         name = arguments_list['-name']
-        
+    if '-noverify' in arguments_list:
+        verify_cert = False
 
     if not url or not threads:
         raise ValueError("Please provide required arguments.")
 
-    obj = Downloader(url, threads, name, '-noverify' not in arguments_list)
+    obj = Downloader(url, threads, name, verify_cert)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
 
