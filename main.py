@@ -20,13 +20,14 @@ class Downloader:
             self.chunk_range = chunk_range  # chunk range to download from server
             self.was_interrupted = was_interrupted  # flag to denote if the job was interrupted due to some error
 
-    def __init__(self, url=None, number_of_threads=1, name=""):
+    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True):
         """Constructor of Downloader class
         :param url: URL of file to be downloaded (optional)
         :param number_of_threads: Maximum number of threads (optional)
         """
         self.url = url  # url of a file to be downloaded
         self.number_of_threads = number_of_threads  # maximum number of threads
+        self.verify_cert = verify_cert
         self.file_size = self.get_file_size()  # remote file's size
         self.if_byte_range = self.is_byte_range_supported()  # if remote server supports byte range
         self.remote_crc32c = self.get_remote_crc32c()  # remote file's checksum
@@ -75,14 +76,14 @@ class Downloader:
         """Get remote file size in bytes from url
         :return: integer
         """
-        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}).headers.get('content-length', None)
+        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get('content-length', None)
         return int(self.file_size)
 
     def is_byte_range_supported(self):
         """Return True if accept-range is supported by the url else False
         :return: boolean
         """
-        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}).headers.get('accept-ranges')
+        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get('accept-ranges')
         if not server_byte_response or server_byte_response == "none":
             return False
         else:
@@ -92,7 +93,7 @@ class Downloader:
         return self.if_contains_crc32c
 
     def get_remote_crc32c(self):
-        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}).headers.get(
+        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get(
             'x-goog-hash')
         if server_crc32c_response:
             response_split = server_crc32c_response.split(', ')
@@ -210,7 +211,7 @@ class Downloader:
 
     def download_entire_file(self):
         """If byte range is not supported by server, download entire file"""
-        r = requests.get(self.url, stream=True)
+        r = requests.get(self.url, stream=True, verify=self.verify_cert)
         with open(self.target_filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:  # filter out keep-alive new chunks
@@ -304,8 +305,11 @@ def getopts(argv):
     """
     opts = {}  # Empty dictionary to store key-value pairs.
     while argv:  # While there are arguments left to parse...
-        if argv[0][0] == '-':  # Found a "-name value" pair.
-            opts[argv[0]] = argv[1]  # Add key and value to the dictionary.
+        if argv[0][0] == '-':  # Found an option
+            if len(argv) > 1 and argv[1][0] != '-': #found "-name value" pair.
+                opts[argv[0]] = argv[1]  # Add key and value to the dictionary.
+            else: #found option that doesnt need value
+                opts[argv[0]] = None
         argv = argv[1:]  # Reduce the argument list by copying it starting from index 1.
     return opts
 
@@ -329,11 +333,12 @@ if __name__ == '__main__':
         threads = int(arguments_list['-threads'])
     if '-name' in arguments_list:
         name = arguments_list['-name']
+        
 
     if not url or not threads:
         raise ValueError("Please provide required arguments.")
 
-    obj = Downloader(url, threads, name)
+    obj = Downloader(url, threads, name, '-noverify' not in arguments_list)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
 
