@@ -43,8 +43,9 @@ class Downloader:
         self.append_write = "wb"  # default mode will be write in binary
         self.download_status = list()  # current download job status of each thread (for benchmarking)
         self.current_status = ""  # current overall status
-        self.start_offset = 0.
-        self.tmp_id = str(uuid.uuid1())
+        self.start_offset = 0
+        self.tmp_id = str(uuid.uuid4())
+        self.overwrite_byte_range = False
 
     def get_url(self):
         """Returns URL of a file to be downloaded"""
@@ -120,11 +121,11 @@ class Downloader:
 
         print("Server support byte range GET? ... ", end="")
 
-        if self.if_byte_range:
+        if self.if_byte_range or self.overwrite_byte_range:
             print("Yes")
-            if os.path.isdir("temp"):
-                shutil.rmtree("temp")
-            os.makedirs("temp")
+            if not os.path.isdir("temp"):
+                #shutil.rmtree("temp")
+                os.makedirs("temp")
 
             self.fill_initial_queue()
             print(obj.get_metadata())
@@ -354,6 +355,13 @@ if __name__ == '__main__':
     if '-offset' in arguments_list:
         obj.start_offset = int(arguments_list['-offset'])
         print(f"attempting download at offset {obj.start_offset}")
+    if '-overwritebr' in arguments_list:
+        obj.overwrite_byte_range = True
+        print("overwriting byte range")
+        if '-filesize' not in arguments_list:
+            print("YOU SHOULD PROBABLY ALSO SET '-filesize'")
+    if '-filesize' in arguments_list:
+        obj.file_size = int(arguments_list['-filesize'])
     
     obj.start_download()
     print(obj.get_remote_crc32c())
