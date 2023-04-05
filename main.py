@@ -127,6 +127,7 @@ class Downloader:
             os.makedirs("temp")
 
             self.fill_initial_queue()
+            print(obj.get_metadata())
 
             print("Starting download threads ... ", end="")
             for i in range(self.number_of_threads):
@@ -280,7 +281,7 @@ class Downloader:
             if(i + chunk_size) < self.file_size-self.start_offset:
                 entry = '%s-%s' % (i, i + chunk_size - 1)
             else:
-                entry = '%s-%s' % (i, self.file_size-self.start_offset)
+                entry = '%s-%s' % (i, self.file_size)
             i += chunk_size
             self.range_list.append(entry)
 
@@ -299,7 +300,8 @@ class Downloader:
             "remote_crc32c": self.remote_crc32c,
             "downloaded_crc32c": self.downloaded_crc32c,
             "range_list": self.range_list,
-            "offset": self.start_offset
+            "offset": self.start_offset,
+            "uuid":self.tmp_id
         }
 
 
@@ -352,8 +354,7 @@ if __name__ == '__main__':
     if '-offset' in arguments_list:
         obj.start_offset = int(arguments_list['-offset'])
         print(f"attempting download at offset {obj.start_offset}")
-
+    
     obj.start_download()
-    print(obj.get_metadata())
     print(obj.get_remote_crc32c())
     print(obj.get_downloaded_crc32c())
