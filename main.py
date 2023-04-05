@@ -43,6 +43,7 @@ class Downloader:
         self.append_write = "wb"  # default mode will be write in binary
         self.download_status = list()  # current download job status of each thread (for benchmarking)
         self.current_status = ""  # current overall status
+        self.start_offset = 0
 
     def get_url(self):
         """Returns URL of a file to be downloaded"""
@@ -156,6 +157,8 @@ class Downloader:
         else:
             print("No")
             try:
+                if self.start_offset != 0:
+                    print("cannot download at given offset")
                 print("Download file at once ... ", end="")
                 self.download_entire_file()
                 print("Done")
@@ -231,7 +234,7 @@ class Downloader:
         self.download_status.clear()
         for i in range(self.number_of_threads):
             if os.path.isfile("temp/part" + str(i)):
-                self.download_status.append(str(round(os.stat("temp/part" + str(i)).st_size/(self.file_size/self.number_of_threads) * 100, 2)) + "%")
+                self.download_status.append(str(round(os.stat("temp/part" + str(i)).st_size/((self.file_size-self.start_offset)/self.number_of_threads) * 100, 2)) + "%")
             else:
                 self.download_status.append("0.00%")
         self.current_status = '\t\t'.join(self.download_status)
@@ -248,7 +251,7 @@ class Downloader:
             print("\nThread\t\tTime Taken\t\tAverage Download Speed")
             for i in range(self.number_of_threads):
                 total_time = self.download_durations[i] - self.start_time
-                average_speed = ((self.file_size / self.number_of_threads) / total_time) * (8 / (1024 * 1024))
+                average_speed = (((self.file_size-self.start_offset) / self.number_of_threads) / total_time) * (8 / (1024 * 1024))
                 print(i+1, "\t\t", round(total_time, 2), "seconds\t\t", round(average_speed, 2), "mbps")
 
     def get_downloaded_crc32c(self):
@@ -270,13 +273,13 @@ class Downloader:
         """Creates the list of byte-range to be downloaded by each thread.
         Total file size is divided by maximum limit of a thread
         """
-        i = 0
-        chunk_size = int(math.ceil(int(self.file_size) / int(self.number_of_threads)))
+        i = self.start_offset
+        chunk_size = int(math.ceil((int(self.file_size)-self.start_offset) / int(self.number_of_threads)))
         for _ in range(self.number_of_threads):
-            if(i + chunk_size) < self.file_size:
+            if(i + chunk_size) < self.file_size-self.start_offset:
                 entry = '%s-%s' % (i, i + chunk_size - 1)
             else:
-                entry = '%s-%s' % (i, self.file_size)
+                entry = '%s-%s' % (i, self.file_size-self.start_offset)
             i += chunk_size
             self.range_list.append(entry)
 
@@ -294,7 +297,8 @@ class Downloader:
             "if_contains_crc32c": self.if_contains_crc32c,
             "remote_crc32c": self.remote_crc32c,
             "downloaded_crc32c": self.downloaded_crc32c,
-            "range_list": self.range_list
+            "range_list": self.range_list,
+            "offset": self.start_offset
         }
 
 
@@ -343,6 +347,10 @@ if __name__ == '__main__':
     obj = Downloader(url, threads, name, verify_cert)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
+    
+    if '-offset' in arguments_list:
+        obj.start_offset = int(arguments_list['-offset'])
+        print(f"attempting download at offset {obj.start_offset}")
 
     obj.start_download()
     print(obj.get_metadata())
