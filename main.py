@@ -11,6 +11,7 @@ import base64
 import queue
 import crcmod
 import uuid
+import socks, socket
 
 class Downloader:
     class Item:
@@ -20,11 +21,26 @@ class Downloader:
             self.chunk_range = chunk_range  # chunk range to download from server
             self.was_interrupted = was_interrupted  # flag to denote if the job was interrupted due to some error
 
-    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True):
+    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True, tor_socks5=None):
         """Constructor of Downloader class
         :param url: URL of file to be downloaded (optional)
         :param number_of_threads: Maximum number of threads (optional)
         """
+        if tor_socks5 is not None:
+            tor_ip = tor_socks5["ip"]
+            tor_port = tor_socks5["port"]
+            self.tor_proxies_requests = {
+                'http': f"socks5://{tor_ip}:{tor_port}",
+                'https': f"socks5://{tor_ip}:{tor_port}"
+            }
+            #proxy_support = urllib.request.ProxyHandler({'http' : tor_socks5, 
+            #                                             'https': tor_socks5})
+                                                         
+            socks.setdefaultproxy(socks.SOCKS5, tor_ip, int(tor_port))
+            socket.socket = socks.socksocket
+        else:
+            self.tor_proxies_requests = None
+        
         self.url = url  # url of a file to be downloaded
         self.number_of_threads = number_of_threads  # maximum number of threads
         self.verify_cert = verify_cert
@@ -79,14 +95,14 @@ class Downloader:
         """Get remote file size in bytes from url
         :return: integer
         """
-        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get('content-length', None)
+        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get('content-length', None)
         return int(self.file_size)
 
     def is_byte_range_supported(self):
         """Return True if accept-range is supported by the url else False
         :return: boolean
         """
-        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get('accept-ranges')
+        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get('accept-ranges')
         if not server_byte_response or server_byte_response == "none":
             return False
         else:
@@ -96,7 +112,7 @@ class Downloader:
         return self.if_contains_crc32c
 
     def get_remote_crc32c(self):
-        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert).headers.get(
+        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get(
             'x-goog-hash')
         if server_crc32c_response:
             response_split = server_crc32c_response.split(', ')
@@ -217,7 +233,8 @@ class Downloader:
 
     def download_entire_file(self):
         """If byte range is not supported by server, download entire file"""
-        r = requests.get(self.url, stream=True, verify=self.verify_cert)
+        print(f"proxies:{self.tor_proxies_requests}")
+        r = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.tor_proxies_requests)
         with open(self.target_filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:  # filter out keep-alive new chunks
@@ -329,13 +346,20 @@ if __name__ == '__main__':
         2. obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
         
     Once objects are created, call start_download function as obj.start_download()
-    """
+    """ 
 
     url = ""
     threads = ""
     name = ""
     verify_cert = True
     arguments_list = getopts(sys.argv)
+    tor_proxy = None
+    if '-tor' in arguments_list:
+        print("setting socks5 tor proxy")
+        if arguments_list['-tor'] is None:
+            tor_proxy = {"ip":"127.0.0.1","port":"9150"}
+        else:
+            tor_proxy = {"ip":arguments_list['-tor'].split(":")[0],"port":arguments_list['-tor'].split(":")[1]}
     if '-url' in arguments_list:
         url = arguments_list['-url']
     if '-threads' in arguments_list:
@@ -348,7 +372,7 @@ if __name__ == '__main__':
     if not url or not threads:
         raise ValueError("Please provide required arguments.")
 
-    obj = Downloader(url, threads, name, verify_cert)
+    obj = Downloader(url, threads, name, verify_cert, tor_proxy)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
     
