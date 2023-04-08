@@ -166,7 +166,7 @@ class Downloader:
             print("Merging chunks into a single file ... ", end="")
             with open(self.target_filename, "ab") as target_file:
                 for i in range(self.number_of_threads):
-                    with open(f"temp/part{str(i)}_{self.tmp_id}", "rb") as chunk_file:
+                    with open(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}", "rb") as chunk_file:
                         target_file.write(chunk_file.read())
             print("Done")
 
@@ -211,16 +211,16 @@ class Downloader:
             try:
                 if item.was_interrupted:
                     time.sleep(1)
-                    if os.path.isfile(f"temp/part{str(item.chunk_id)}_{self.tmp_id}"):
+                    if os.path.isfile(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}"):
                         self.append_write = "ab"
                         temp = item.chunk_range.split('-')
-                        item.chunk_range = str(int(temp[0]) + os.stat(f"temp/part{str(item.chunk_id)}_{self.tmp_id}").st_size) + '-' + temp[1]
+                        item.chunk_range = str(int(temp[0]) + os.stat(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}").st_size) + '-' + temp[1]
                     else:
                         self.append_write = "wb"
 
                 req = urllib.request.Request(self.get_url())
                 req.headers['Range'] = 'bytes={}'.format(item.chunk_range)
-                with urllib.request.urlopen(req) as response, open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}", self.append_write) as out_file:
+                with urllib.request.urlopen(req) as response, open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}", self.append_write) as out_file:
                     shutil.copyfileobj(response, out_file)
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
@@ -253,8 +253,8 @@ class Downloader:
         """
         self.download_status.clear()
         for i in range(self.number_of_threads):
-            if os.path.isfile(f"temp/part{str(i)}_{self.tmp_id}"):
-                self.download_status.append(str(round(os.stat(f"temp/part{str(i)}_{self.tmp_id}").st_size/((self.file_size-self.start_offset)/self.number_of_threads) * 100, 2)) + "%")
+            if os.path.isfile(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}"):
+                self.download_status.append(str(round(os.stat(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}").st_size/((self.file_size-self.start_offset)/self.number_of_threads) * 100, 2)) + "%")
             else:
                 self.download_status.append("0.00%")
         self.current_status = '\t\t'.join(self.download_status)
