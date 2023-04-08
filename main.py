@@ -16,33 +16,36 @@ import socks, socket
 class Downloader:
     class Item:
         """Job queue item class"""
-        def __init__(self, chunk_id, chunk_range, was_interrupted=False):
+        def __init__(self, chunk_id, chunk_range, tor_id, proxy_dict, url=None, was_interrupted=False):
             self.chunk_id = chunk_id  # chunk id to be downloaded
             self.chunk_range = chunk_range  # chunk range to download from server
             self.was_interrupted = was_interrupted  # flag to denote if the job was interrupted due to some error
+            self.tor_id = tor_id
+            self.proxy_dict = proxy_dict
+            self.url=url
+            
+    def get_requests_proxy_config(self, port_offset=0):
+        if self.tor_socks5 == None: return None
+        tor_ip = self.tor_socks5["ip"]
+        tor_port = int(self.tor_socks5["port"])
+        return {
+            'http': f"socks5://{tor_ip}:{tor_port+port_offset}",
+            'https': f"socks5://{tor_ip}:{tor_port+port_offset}"
+        }
 
-    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True, tor_socks5=None):
+    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True, tor_socks5=None, multipath=None):
         """Constructor of Downloader class
         :param url: URL of file to be downloaded (optional)
         :param number_of_threads: Maximum number of threads (optional)
         """
-        if tor_socks5 is not None:
-            tor_ip = tor_socks5["ip"]
-            tor_port = tor_socks5["port"]
-            self.tor_proxies_requests = {
-                'http': f"socks5://{tor_ip}:{tor_port}",
-                'https': f"socks5://{tor_ip}:{tor_port}"
-            }
-            #proxy_support = urllib.request.ProxyHandler({'http' : tor_socks5, 
-            #                                             'https': tor_socks5})
-                                                         
-            socks.setdefaultproxy(socks.SOCKS5, tor_ip, int(tor_port))
-            socket.socket = socks.socksocket
-        else:
-            self.tor_proxies_requests = None
-        
+        self.tor_socks5 = tor_socks5
         self.url = url  # url of a file to be downloaded
         self.number_of_threads = number_of_threads  # maximum number of threads
+        if multipath:
+            with open(multipath, 'r') as file:
+                self.multiurl = [line.rstrip() for line in file]
+            self.url = self.multiurl[0]
+            self.number_of_threads = len(self.multiurl)
         self.verify_cert = verify_cert
         self.file_size = self.get_file_size()  # remote file's size
         self.if_byte_range = self.is_byte_range_supported()  # if remote server supports byte range
@@ -95,14 +98,14 @@ class Downloader:
         """Get remote file size in bytes from url
         :return: integer
         """
-        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get('content-length', None)
+        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get('content-length', None)
         return int(self.file_size)
 
     def is_byte_range_supported(self):
         """Return True if accept-range is supported by the url else False
         :return: boolean
         """
-        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get('accept-ranges')
+        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get('accept-ranges')
         if not server_byte_response or server_byte_response == "none":
             return False
         else:
@@ -112,7 +115,7 @@ class Downloader:
         return self.if_contains_crc32c
 
     def get_remote_crc32c(self):
-        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.tor_proxies_requests).headers.get(
+        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get(
             'x-goog-hash')
         if server_crc32c_response:
             response_split = server_crc32c_response.split(', ')
@@ -201,8 +204,10 @@ class Downloader:
     def fill_initial_queue(self):
         """Fill the queue at the start of downloading"""
         self.build_range()
+        count = 0
         for chunk_id, chunk_range in enumerate(self.range_list):
-            self.q.put(self.Item(chunk_id, chunk_range, False))
+            self.q.put(self.Item(chunk_id, chunk_range, count, self.get_requests_proxy_config(count), self.multiurl[count] if self.multiurl else None, False))
+            count = count+1
 
     def download_chunk(self):
         """Get job from queue. Download chunk of a file. Range is extracted from job's chunk_range field"""
@@ -218,10 +223,15 @@ class Downloader:
                     else:
                         self.append_write = "wb"
 
-                req = urllib.request.Request(self.get_url())
-                req.headers['Range'] = 'bytes={}'.format(item.chunk_range)
-                with urllib.request.urlopen(req) as response, open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}", self.append_write) as out_file:
-                    shutil.copyfileobj(response, out_file)
+                if item.proxy_dict is None:
+                    url = self.get_url()
+                else:
+                    url = item.url
+                req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
+                with open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}", self.append_write) as out_file:
+                    for chunk in req.iter_content(chunk_size=1024): 
+                        if chunk:
+                            out_file.write(chunk)
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
             except IOError:
@@ -234,7 +244,7 @@ class Downloader:
     def download_entire_file(self):
         """If byte range is not supported by server, download entire file"""
         print(f"proxies:{self.tor_proxies_requests}")
-        r = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.tor_proxies_requests)
+        r = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.get_requests_proxy_config())
         with open(self.target_filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:  # filter out keep-alive new chunks
@@ -354,10 +364,11 @@ if __name__ == '__main__':
     verify_cert = True
     arguments_list = getopts(sys.argv)
     tor_proxy = None
+    multipath = None
     if '-tor' in arguments_list:
         print("setting socks5 tor proxy")
         if arguments_list['-tor'] is None:
-            tor_proxy = {"ip":"127.0.0.1","port":"9150"}
+            tor_proxy = {"ip":"127.0.0.1","port":"9000"}
         else:
             tor_proxy = {"ip":arguments_list['-tor'].split(":")[0],"port":arguments_list['-tor'].split(":")[1]}
     if '-url' in arguments_list:
@@ -368,11 +379,15 @@ if __name__ == '__main__':
         name = arguments_list['-name']
     if '-noverify' in arguments_list:
         verify_cert = False
+    if '-multipath' in arguments_list:
+        multipath = arguments_list['-multipath']
 
-    if not url or not threads:
+    if (not url or not threads) and not multipath:
         raise ValueError("Please provide required arguments.")
+    if multipath and not tor_proxy:
+        raise ValueError("multipath requires '-tor'")
 
-    obj = Downloader(url, threads, name, verify_cert, tor_proxy)
+    obj = Downloader(url, threads, name, verify_cert, tor_proxy, multipath)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
     
