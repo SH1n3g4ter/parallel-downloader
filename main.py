@@ -277,7 +277,7 @@ class Downloader:
                                             out_file.write(chunk)
                                     clear_to_pass = True
                                 except Timeout:
-                                    print("no content received in timeout, connecting new"
+                                    print("no content received in timeout, connecting new")
                                     item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
                                     self.tail_pos = self.tail_pos + 1
                 self.download_durations[item.chunk_id] = timeit.default_timer()
