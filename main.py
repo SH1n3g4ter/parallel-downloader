@@ -12,6 +12,30 @@ import queue
 import crcmod
 import uuid
 import socks, socket
+import eventlet
+eventlet.monkey_patch(socket=True)
+from eventlet.timeout import Timeout
+import requests
+
+def monkeypatch_method(cls):
+    def decorator(func):
+        setattr(cls, func.__name__, func)
+        return func
+    return decorator
+
+@monkeypatch_method(requests.Response)
+def iter_content_with_timeout(self, **kwargs):
+    if 'timeout' in kwargs:
+        timeout = kwargs.pop('timeout')
+    else:
+        raise TypeError('timeout not provided')
+    it = self.iter_content(**kwargs)
+    try:
+        while True:
+            with Timeout(timeout):
+                yield next(it)
+    finally:
+        it.close()
 
 class Downloader:
     class Item:
@@ -46,6 +70,10 @@ class Downloader:
                 self.multiurl = [line.rstrip() for line in file]
             self.url = self.multiurl[0]
             self.number_of_threads = len(self.multiurl)
+            #self.failing_check = [0]*128
+            self.tail_pos = 0
+        else:
+            self.multiurl = None
         self.verify_cert = verify_cert
         self.file_size = self.get_file_size()  # remote file's size
         self.if_byte_range = self.is_byte_range_supported()  # if remote server supports byte range
@@ -173,8 +201,8 @@ class Downloader:
                         target_file.write(chunk_file.read())
             print("Done")
 
-            if os.path.isdir("temp"):
-                shutil.rmtree("temp")
+            #if os.path.isdir("temp"):
+            #    shutil.rmtree("temp")
 
         else:
             print("No")
@@ -223,15 +251,35 @@ class Downloader:
                     else:
                         self.append_write = "wb"
 
-                if item.proxy_dict is None:
+                if self.multiurl is None:
+                    print("proxy dict none")
                     url = self.get_url()
                 else:
                     url = item.url
-                req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
+                    
                 with open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}", self.append_write) as out_file:
-                    for chunk in req.iter_content(chunk_size=1024): 
-                        if chunk:
-                            out_file.write(chunk)
+                    if self.multiurl is None:
+                        for chunk in req.iter_content(chunk_size=1024, timeout=1.0):
+                            if chunk:
+                                out_file.write(chunk)
+                    else:
+                        clear_to_pass = False
+                        while not clear_to_pass: #scuffed af to use tor connections at end of port range
+                            req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
+                            if req.status_code != 200 and req.status_code != 206:
+                                print(f"BAD response code ({req.status_code}) for item "+str(item.tor_id))
+                                item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
+                                self.tail_pos = self.tail_pos + 1
+                            else:
+                                try:
+                                    for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=1.0):
+                                        if chunk:
+                                            out_file.write(chunk)
+                                    clear_to_pass = True
+                                except Timeout:
+                                    print("no content received in timeout, connecting new"
+                                    item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
+                                    self.tail_pos = self.tail_pos + 1
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
             except IOError:
@@ -243,12 +291,11 @@ class Downloader:
 
     def download_entire_file(self):
         """If byte range is not supported by server, download entire file"""
-        print(f"proxies:{self.tor_proxies_requests}")
-        r = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.get_requests_proxy_config())
-        with open(self.target_filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024):
+        req = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.get_requests_proxy_config())
+        with open(self.target_filename, 'wb') as out_file:
+            for chunk in req.iter_content(chunk_size=1024):
                 if chunk:  # filter out keep-alive new chunks
-                    f.write(chunk)
+                    out_file.write(chunk)
 
     def get_status_header(self):
         """Returns header for the download status"""
@@ -266,7 +313,7 @@ class Downloader:
             if os.path.isfile(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}"):
                 self.download_status.append(str(round(os.stat(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}").st_size/((self.file_size-self.start_offset)/self.number_of_threads) * 100, 2)) + "%")
             else:
-                self.download_status.append("0.00%")
+                self.download_status.append("0.00% [nofile]")
         self.current_status = '\t\t'.join(self.download_status)
         if all(x == "100.0%" for x in self.download_status):
             return False
