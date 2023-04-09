@@ -1,9 +1,12 @@
 import os
 import sys
+import eventlet
+eventlet.monkey_patch(socket=True)
+from eventlet.timeout import Timeout
 import requests
 import threading
 import shutil
-import urllib.request
+#import urllib.request
 import timeit
 import time
 import math
@@ -11,11 +14,7 @@ import base64
 import queue
 import crcmod
 import uuid
-import socks, socket
-import eventlet
-eventlet.monkey_patch(socket=True)
-from eventlet.timeout import Timeout
-import requests
+#import socks, socket
 
 def monkeypatch_method(cls):
     def decorator(func):
@@ -40,11 +39,10 @@ def iter_content_with_timeout(self, **kwargs):
 class Downloader:
     class Item:
         """Job queue item class"""
-        def __init__(self, chunk_id, chunk_range, tor_id, proxy_dict, url=None, was_interrupted=False):
+        def __init__(self, chunk_id, chunk_range, proxy_dict, url=None, was_interrupted=False):
             self.chunk_id = chunk_id  # chunk id to be downloaded
             self.chunk_range = chunk_range  # chunk range to download from server
             self.was_interrupted = was_interrupted  # flag to denote if the job was interrupted due to some error
-            self.tor_id = tor_id
             self.proxy_dict = proxy_dict
             self.url=url
             
@@ -69,8 +67,8 @@ class Downloader:
             with open(multipath, 'r') as file:
                 self.multiurl = [line.rstrip() for line in file]
             self.url = self.multiurl[0]
-            self.number_of_threads = len(self.multiurl)
-            #self.failing_check = [0]*128
+            self.multi_reserve = 4
+            self.number_of_threads = len(self.multiurl)-self.multi_reserve
             self.tail_pos = 0
         else:
             self.multiurl = None
@@ -126,7 +124,8 @@ class Downloader:
         """Get remote file size in bytes from url
         :return: integer
         """
-        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get('content-length', None)
+        proxy_dict = self.get_requests_proxy_config()
+        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=proxy_dict).headers.get('content-length', None)
         return int(self.file_size)
 
     def is_byte_range_supported(self):
@@ -232,10 +231,8 @@ class Downloader:
     def fill_initial_queue(self):
         """Fill the queue at the start of downloading"""
         self.build_range()
-        count = 0
         for chunk_id, chunk_range in enumerate(self.range_list):
-            self.q.put(self.Item(chunk_id, chunk_range, count, self.get_requests_proxy_config(count), self.multiurl[count] if self.multiurl else None, False))
-            count = count+1
+            self.q.put(self.Item(chunk_id, chunk_range, self.get_requests_proxy_config(chunk_id), self.multiurl[chunk_id] if self.multiurl else None, False))
 
     def download_chunk(self):
         """Get job from queue. Download chunk of a file. Range is extracted from job's chunk_range field"""
@@ -256,10 +253,12 @@ class Downloader:
                     url = self.get_url()
                 else:
                     url = item.url
-                    
-                with open(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}", self.append_write) as out_file:
+                
+                #TODO combine this with the interrupt part above
+                partpath = f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}"
+                with open(partpath, self.append_write) as out_file:
                     if self.multiurl is None:
-                        for chunk in req.iter_content(chunk_size=1024, timeout=1.0):
+                        for chunk in req.iter_content(chunk_size=1024):
                             if chunk:
                                 out_file.write(chunk)
                     else:
@@ -267,19 +266,29 @@ class Downloader:
                         while not clear_to_pass: #scuffed af to use tor connections at end of port range
                             req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
                             if req.status_code != 200 and req.status_code != 206:
-                                print(f"BAD response code ({req.status_code}) for item "+str(item.tor_id))
+                                print(f"BAD response code ({req.status_code}) for item "+str(item.chunk_id))
                                 item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
                                 self.tail_pos = self.tail_pos + 1
+                                print(f"proxy config:{str(item.proxy_dict)}")
+                                print(f"tail now at:{127-self.tail_pos}")
                             else:
                                 try:
-                                    for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=1.0):
+                                    for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=3.0):
                                         if chunk:
                                             out_file.write(chunk)
                                     clear_to_pass = True
                                 except Timeout:
-                                    print("no content received in timeout, connecting new")
-                                    item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
-                                    self.tail_pos = self.tail_pos + 1
+                                    print(f"no content received in timeout [chunk_id:{item.chunk_id}]")
+                                    if self.multi_reserve > 0:
+                                        print("switching to reserve")
+                                        range_start, range_end = self.chunk_range.split('-')
+                                        sofar_size = int(os.path.getsize(partpath))
+                                        self.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
+                                        self.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
+                                        self.multi_reserve = self.multi_reserve - 1
+                                        print(f"{self.multi_reserve}: remaining reserves")
+                                    else:
+                                        print("ERR no reserves remaining")
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
             except IOError:
