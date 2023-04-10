@@ -170,7 +170,6 @@ class Downloader:
         if self.if_byte_range or self.overwrite_byte_range:
             print("Yes")
             if not os.path.isdir("temp"):
-                #shutil.rmtree("temp")
                 os.makedirs("temp")
 
             self.fill_initial_queue()
@@ -196,12 +195,11 @@ class Downloader:
             print("Merging chunks into a single file ... ", end="")
             with open(self.target_filename, "ab") as target_file:
                 for i in range(self.number_of_threads):
-                    with open(f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}", "rb") as chunk_file:
+                    partpath = f"temp/part{str(i)}_{self.tmp_id}_{self.target_filename}"
+                    with open(partpath, "rb") as chunk_file:
                         target_file.write(chunk_file.read())
+                    os.unlink(partpath)
             print("Done")
-
-            #if os.path.isdir("temp"):
-            #    shutil.rmtree("temp")
 
         else:
             print("No")
