@@ -67,7 +67,7 @@ class Downloader:
             with open(multipath, 'r') as file:
                 self.multiurl = [line.rstrip() for line in file]
             self.url = self.multiurl[0]
-            self.multi_reserve = 8
+            self.multi_reserve = int(0.1*len(self.multiurl))
             self.number_of_threads = len(self.multiurl)-self.multi_reserve
             self.tail_pos = 0
         else:
