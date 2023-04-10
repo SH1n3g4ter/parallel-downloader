@@ -281,9 +281,9 @@ class Downloader:
                                     print(f"no content received in timeout [chunk_id:{item.chunk_id}]")
                                     if self.multi_reserve > 0:
                                         print("switching to reserve")
-                                        range_start, range_end = self.chunk_range.split('-')
+                                        range_start, range_end = item.chunk_range.split('-')
                                         sofar_size = int(os.path.getsize(partpath))
-                                        self.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
+                                        item.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
                                         self.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
                                         self.multi_reserve = self.multi_reserve - 1
                                         print(f"{self.multi_reserve}: remaining reserves")
