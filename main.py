@@ -33,8 +33,6 @@ def iter_content_with_timeout(self, **kwargs):
         while True:
             with Timeout(timeout):
                 yield next(it)
-    except StopIteration:
-        pass
     finally:
         it.close()
 
@@ -268,6 +266,7 @@ class Downloader:
                         clear_to_pass = False
                         while not clear_to_pass: #scuffed af to use tor connections at end of port range
                             req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
+                            print(f"chunk range: {item.chunk_rage}")
                             if req.status_code != 200 and req.status_code != 206:
                                 print(f"BAD response code ({req.status_code}) for item "+str(item.chunk_id))
                                 item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
@@ -290,11 +289,13 @@ class Downloader:
                                         item.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
                                         url = item.url
                                         self.multi_reserve = self.multi_reserve - 1
-                                        print(f"new chunk range {item.chunk_rage}")
+                                        print(f"new chunk range: {item.chunk_rage}")
                                         print(f"{self.multi_reserve}: remaining reserves")
                                     else:
                                         print("ERR no reserves remaining")
                                         clear_to_pass = True
+                                except StopIteration, Exception:
+                                    clear_to_pass = True
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
             except IOError:
