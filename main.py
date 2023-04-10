@@ -292,7 +292,7 @@ class Downloader:
                                         url = item.url
                                         self.multi_reserve = self.multi_reserve - 1
                                         print(f"new chunk range: {item.chunk_range}")
-                                        print(f"{self.multi_reserve}: remaining reserves")
+                                        print(f"{self.multi_reserve} remaining reserves")
                                         item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
                                         self.tail_pos = self.tail_pos + 1
                                         print(f"proxy config:{str(item.proxy_dict)}")
