@@ -33,6 +33,8 @@ def iter_content_with_timeout(self, **kwargs):
         while True:
             with Timeout(timeout):
                 yield next(it)
+    except StopIteration:
+        pass
     finally:
         it.close()
 
@@ -258,6 +260,7 @@ class Downloader:
                 partpath = f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}"
                 with open(partpath, self.append_write) as out_file:
                     if self.multiurl is None:
+                        req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
                         for chunk in req.iter_content(chunk_size=1024):
                             if chunk:
                                 out_file.write(chunk)
@@ -284,11 +287,14 @@ class Downloader:
                                         range_start, range_end = item.chunk_range.split('-')
                                         sofar_size = int(os.path.getsize(partpath))
                                         item.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
-                                        self.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
+                                        item.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
+                                        url = item.url
                                         self.multi_reserve = self.multi_reserve - 1
+                                        print(f"new chunk range {item.chunk_rage}")
                                         print(f"{self.multi_reserve}: remaining reserves")
                                     else:
                                         print("ERR no reserves remaining")
+                                        clear_to_pass = True
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
             except IOError:
