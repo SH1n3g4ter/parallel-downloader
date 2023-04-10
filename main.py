@@ -67,7 +67,7 @@ class Downloader:
             with open(multipath, 'r') as file:
                 self.multiurl = [line.rstrip() for line in file]
             self.url = self.multiurl[0]
-            self.multi_reserve = 4
+            self.multi_reserve = 8
             self.number_of_threads = len(self.multiurl)-self.multi_reserve
             self.tail_pos = 0
         else:
@@ -274,7 +274,7 @@ class Downloader:
                                 print(f"tail now at:{127-self.tail_pos}")
                             else:
                                 try:
-                                    for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=3.0):
+                                    for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=5.0):
                                         if chunk:
                                             out_file.write(chunk)
                                     clear_to_pass = True
@@ -283,6 +283,9 @@ class Downloader:
                                     if self.multi_reserve > 0:
                                         print("switching to reserve")
                                         range_start, range_end = item.chunk_range.split('-')
+                                        out_file.flush()
+                                        os.fsync(out_file.fileno())
+                                        time.sleep(1)
                                         sofar_size = int(os.path.getsize(partpath))
                                         item.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
                                         item.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
@@ -290,6 +293,10 @@ class Downloader:
                                         self.multi_reserve = self.multi_reserve - 1
                                         print(f"new chunk range: {item.chunk_range}")
                                         print(f"{self.multi_reserve}: remaining reserves")
+                                        item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
+                                        self.tail_pos = self.tail_pos + 1
+                                        print(f"proxy config:{str(item.proxy_dict)}")
+                                        print(f"tail now at:{127-self.tail_pos}")
                                     else:
                                         print("ERR no reserves remaining")
                                         clear_to_pass = True
