@@ -266,7 +266,6 @@ class Downloader:
                         clear_to_pass = False
                         while not clear_to_pass: #scuffed af to use tor connections at end of port range
                             req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
-                            print(f"chunk range: {item.chunk_range}")
                             if req.status_code != 200 and req.status_code != 206:
                                 print(f"BAD response code ({req.status_code}) for item "+str(item.chunk_id))
                                 item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
@@ -368,13 +367,15 @@ class Downloader:
         """
         i = self.start_offset
         chunk_size = int(math.ceil((int(self.file_size)-self.start_offset) / int(self.number_of_threads)))
+        print(f"chunk_size: {chunk_size}")
         for _ in range(self.number_of_threads):
-            if(i + chunk_size) < self.file_size-self.start_offset:
+            if(i + chunk_size) < self.file_size:
                 entry = '%s-%s' % (i, i + chunk_size - 1)
             else:
                 entry = '%s-%s' % (i, self.file_size)
             i += chunk_size
             self.range_list.append(entry)
+        print(f"range list: {self.range_list}")
 
     def get_target_filename(self):
         """Returns the target file name"""
