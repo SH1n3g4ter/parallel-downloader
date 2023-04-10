@@ -294,7 +294,7 @@ class Downloader:
                                     else:
                                         print("ERR no reserves remaining")
                                         clear_to_pass = True
-                                except StopIteration, Exception:
+                                except (StopIteration, Exception):
                                     clear_to_pass = True
                 self.download_durations[item.chunk_id] = timeit.default_timer()
 
