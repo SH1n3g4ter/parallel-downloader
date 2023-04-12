@@ -6,7 +6,6 @@ from eventlet.timeout import Timeout
 import requests
 import threading
 import shutil
-#import urllib.request
 import timeit
 import time
 import math
@@ -14,7 +13,7 @@ import base64
 import queue
 import crcmod
 import uuid
-#import socks, socket
+import json
 
 def monkeypatch_method(cls):
     def decorator(func):
@@ -55,12 +54,13 @@ class Downloader:
             'https': f"socks5://{tor_ip}:{tor_port+port_offset}"
         }
 
-    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True, tor_socks5=None, multipath=None):
+    def __init__(self, url=None, number_of_threads=1, name="", verify_cert=True, tor_socks5=None, multipath=None, filesize=None, cookies=None):
         """Constructor of Downloader class
         :param url: URL of file to be downloaded (optional)
         :param number_of_threads: Maximum number of threads (optional)
         """
         self.tor_socks5 = tor_socks5
+        self.cookies = cookies
         self.url = url  # url of a file to be downloaded
         self.number_of_threads = number_of_threads  # maximum number of threads
         if multipath:
@@ -73,7 +73,7 @@ class Downloader:
         else:
             self.multiurl = None
         self.verify_cert = verify_cert
-        self.file_size = self.get_file_size()  # remote file's size
+        self.file_size = self.get_file_size() if filesize is None else filesize # remote file's size
         self.if_byte_range = self.is_byte_range_supported()  # if remote server supports byte range
         self.remote_crc32c = self.get_remote_crc32c()  # remote file's checksum
         self.if_contains_crc32c = True if self.remote_crc32c != -1 or self.remote_crc32c is not None else False  # if remote file has a checksum
@@ -125,14 +125,14 @@ class Downloader:
         :return: integer
         """
         proxy_dict = self.get_requests_proxy_config()
-        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=proxy_dict).headers.get('content-length', None)
+        self.file_size = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=proxy_dict, cookies=self.cookies).headers.get('content-length', None)
         return int(self.file_size)
 
     def is_byte_range_supported(self):
         """Return True if accept-range is supported by the url else False
         :return: boolean
         """
-        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get('accept-ranges')
+        server_byte_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config(), cookies=self.cookies).headers.get('accept-ranges')
         if not server_byte_response or server_byte_response == "none":
             return False
         else:
@@ -142,7 +142,7 @@ class Downloader:
         return self.if_contains_crc32c
 
     def get_remote_crc32c(self):
-        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config()).headers.get(
+        server_crc32c_response = requests.head(self.url, headers={'Accept-Encoding': 'identity'}, verify=self.verify_cert, proxies=self.get_requests_proxy_config(), cookies=self.cookies).headers.get(
             'x-goog-hash')
         if server_crc32c_response:
             response_split = server_crc32c_response.split(', ')
@@ -245,25 +245,28 @@ class Downloader:
                         item.chunk_range = str(int(temp[0]) + os.stat(f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}").st_size) + '-' + temp[1]
                     else:
                         self.append_write = "wb"
-
-                if self.multiurl is None:
-                    print("proxy dict none")
-                    url = self.get_url()
-                else:
-                    url = item.url
                 
                 #TODO combine this with the interrupt part above
                 partpath = f"temp/part{str(item.chunk_id)}_{self.tmp_id}_{self.target_filename}"
                 with open(partpath, self.append_write) as out_file:
                     if self.multiurl is None:
-                        req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
-                        for chunk in req.iter_content(chunk_size=1024):
-                            if chunk:
-                                out_file.write(chunk)
+                        req = requests.get(self.get_url(), stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict, cookies=self.cookies)
+                        try:
+                            for chunk in req.iter_content_with_timeout(chunk_size=1024, timeout=15.0):
+                                if chunk:
+                                    out_file.write(chunk)
+                        except RuntimeError:
+                            print("StopIteration received, putting item back in queue, ending current thread")
+                            self.q.put(item)
+                            return
+                        except Timeout:
+                            print("item timeout putting it back in queue, ending current thread")
+                            self.q.put(item)
+                            return
                     else:
                         clear_to_pass = False
                         while not clear_to_pass: #scuffed af to use tor connections at end of port range
-                            req = requests.get(url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict)
+                            req = requests.get(item.url, stream=True, headers={'Range':f"bytes={item.chunk_range}"}, verify=self.verify_cert, proxies=item.proxy_dict, cookies=self.cookies)
                             if req.status_code != 200 and req.status_code != 206:
                                 print(f"BAD response code ({req.status_code}) for item "+str(item.chunk_id))
                                 item.proxy_dict = self.get_requests_proxy_config(127-self.tail_pos)
@@ -287,7 +290,6 @@ class Downloader:
                                         sofar_size = int(os.path.getsize(partpath))
                                         item.chunk_range = f"{int(range_start)+sofar_size}-{range_end}"
                                         item.url = self.multiurl[len(self.multiurl)-self.multi_reserve]
-                                        url = item.url
                                         self.multi_reserve = self.multi_reserve - 1
                                         print(f"new chunk range: {item.chunk_range}")
                                         print(f"{self.multi_reserve} remaining reserves")
@@ -311,7 +313,7 @@ class Downloader:
 
     def download_entire_file(self):
         """If byte range is not supported by server, download entire file"""
-        req = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.get_requests_proxy_config())
+        req = requests.get(self.url, stream=True, verify=self.verify_cert, proxies=self.get_requests_proxy_config(), cookies=self.cookies)
         with open(self.target_filename, 'wb') as out_file:
             for chunk in req.iter_content(chunk_size=1024):
                 if chunk:  # filter out keep-alive new chunks
@@ -434,6 +436,8 @@ if __name__ == '__main__':
     arguments_list = getopts(sys.argv)
     tor_proxy = None
     multipath = None
+    filesize = None
+    cookies = None
     if '-tor' in arguments_list:
         print("setting socks5 tor proxy")
         if arguments_list['-tor'] is None:
@@ -455,8 +459,14 @@ if __name__ == '__main__':
         raise ValueError("Please provide required arguments.")
     if multipath and not tor_proxy:
         raise ValueError("multipath requires '-tor'")
+        
+    if '-filesize' in arguments_list:
+        filesize = int(arguments_list['-filesize'])
+    if '-cookie' in arguments_list:
+        cookies = json.loads(arguments_list['-cookie'])
+        print(f"cookies: {str(cookies)}")
 
-    obj = Downloader(url, threads, name, verify_cert, tor_proxy, multipath)
+    obj = Downloader(url, threads, name, verify_cert, tor_proxy, multipath, filesize, cookies)
     # obj = Downloader("https://storage.googleapis.com/vimeo-test/work-at-vimeo-2.mp4", 10)
     # obj = Downloader("http://i.imgur.com/z4d4kWk.jpg", 3)
     
@@ -468,8 +478,6 @@ if __name__ == '__main__':
         print("overwriting byte range")
         if '-filesize' not in arguments_list:
             print("YOU SHOULD PROBABLY ALSO SET '-filesize'")
-    if '-filesize' in arguments_list:
-        obj.file_size = int(arguments_list['-filesize'])
     
     obj.start_download()
     print(obj.get_remote_crc32c())
